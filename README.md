@@ -35,14 +35,15 @@ A character who is not in a guild can still use the window. That copy stays on t
 ## Raid night
 
 1. Officers put reservations on the Notes tab before the raid. Starting a lockout announces them in raid chat.
-2. The raid leader starts a lockout (Molten Core, Blackwing Lair, or whatever the night is). Current-item counts reset. Everyone in the group is marked present.
-3. Set loot to master looter with the Master loot button if the client allows it. Alt+click an item in the loot window, bags, or chat. Rare and better loot icons also show on the Roll tab while the corpse is open.
-4. Mark Tier when the item is tier. Press Start. Raiders get a popup with Main spec, Off spec, and Pass.
-5. Main spec beats off spec. The lowest score among the winning priority takes it. Confirm awards that person. Override awards the selected row and requires a reason, which is recorded.
-6. A tie rolls 1-100. The Roll 100 button works from the popup. The highest roll wins. If someone does not roll, the tie stays open. If the rolls tie again, those players roll again.
-7. Give item hands the loot over when you are the master looter. If the client refuses, trade the item.
-8. Skip leaves the item unawarded. It does not count as a +1 and does not lock the item.
-9. Awards are final. Void, on the History tab or with `/tgcloot void`, is an exceptional correction. It is written into the log. It is not an undo button.
+2. When the guild master or an officer is leading the group, a prompt asks whether to track the run. Tracking stamps the run in UTC and opens attendance. Each raider needs a first and last name. A first name alone is not saved, and a shared first name is not matched to someone already in the record.
+3. The raid leader can also start a lockout by hand (Molten Core, Blackwing Lair, or whatever the night is). Current-item counts reset for the active raid group. People the client already names in full are marked present. Everyone else is filled in from the attendance window.
+4. Set loot to master looter with the Master loot button if the client allows it. Alt+click an item in the loot window, bags, or chat. Rare and better loot icons also show on the Roll tab while the corpse is open.
+5. Mark Tier when the item is tier. Press Start. Raiders get a popup with Main spec, Off spec, and Pass.
+6. Main spec beats off spec. The lowest score among the winning priority takes it. Confirm awards that person. Override awards the selected row and requires a reason, which is recorded.
+7. A tie rolls 1-100. The Roll 100 button works from the popup. The highest roll wins. If someone does not roll, the tie stays open. If the rolls tie again, those players roll again.
+8. Give item hands the loot over when you are the master looter. If the client refuses, trade the item.
+9. Skip leaves the item unawarded. It does not count as a +1 and does not lock the item.
+10. Awards are final. Void, on the History tab or with `/tgcloot void`, is an exceptional correction. It is written into the log. It is not an undo button.
 
 Main spec is whatever the raider clicks for that item. The declared spec is shown so officers can judge mixed-use items. Officers decide main-spec eligibility. Say known reservations and priorities before the raid.
 
@@ -72,14 +73,20 @@ If your copy is behind, an officer's client sends the full record. The guild mas
 
 The record is per guild on the account. Logging into another guild does not mix the two.
 
+## Raid groups
+
+Tracking uses the raid group named default. Scores, attendance, and the current lockout for that group stay on their own sheet. The Admin tab can switch the active group, for example to alt. A second group does not share weeks, wins, or current items with default. Name, class, spec, and guild or guest stay with the player.
+
+The Admin tab lists the players in the record for the active group. Officers can add a player, mark guild or guest, set a spec, add that player to the current run, or remove a run from their attendance. Clearing attendance changes the 6-week rate. It does not void items. Void stays on the History tab.
+
 ## Commands
 
 | Command | Effect |
 | --- | --- |
 | `/tgcloot` or `/tgc` | Open or close the window |
 | `/tgcloot spec Fury` | Save your main spec and send it to the raid leader |
-| `/tgcloot lockout MC` | Start a lockout, reset current items, record attendance |
-| `/tgcloot attendance` | Add raiders who joined after the lockout started |
+| `/tgcloot lockout MC` | Start a dated lockout on the active raid group and open attendance |
+| `/tgcloot attendance` | Review who is present. A first and last name are required |
 | `/tgcloot push` | Officers send the full record |
 | `/tgcloot pull` | Apply a newer record that was held during a raid |
 | `/tgcloot scores` | Print tier and non-tier scores |

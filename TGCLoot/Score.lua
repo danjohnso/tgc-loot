@@ -10,6 +10,21 @@ TGC.WINDOW = 6
 TGC.MEMBER_WEEKS = 4
 TGC.GUEST_RAIDS = 4
 
+-- The default raid group keeps weeks, raids, wins, and current counts on the player.
+-- Any other group stores that same shape under player.tracks[group]. This read does not create a track.
+function TGC.Sheet(player, group)
+  if group == nil or group == "" or group == "default" then
+    if type(player) ~= "table" then
+      return { weeks = {}, raids = {}, wins = {}, current = { lockout = "", tier = 0, other = 0 } }
+    end
+    return player
+  end
+  local tracks = type(player) == "table" and player.tracks or nil
+  local track = tracks and tracks[group]
+  if type(track) == "table" then return track end
+  return { weeks = {}, raids = {}, wins = {}, current = { lockout = "", tier = 0, other = 0 } }
+end
+
 function TGC.WeekId(serverTime, resetDay, resetHour)
   if type(serverTime) ~= "number" then return 0 end
   resetDay = tonumber(resetDay) or 2
@@ -70,12 +85,12 @@ function TGC.EffectiveRate(status, personal, guildAvg)
   return 0
 end
 
-function TGC.GuildAverage(players, weekNow, tier, isGuild)
+function TGC.GuildAverage(players, weekNow, tier, isGuild, group)
   local function collect(establishedOnly)
     local wins, weeks = 0, 0
     for key, player in pairs(players or {}) do
       if isGuild(key, player) then
-        local attended, taken = TGC.TrackStats(player, weekNow, tier)
+        local attended, taken = TGC.TrackStats(TGC.Sheet(player, group), weekNow, tier)
         local include = establishedOnly and attended >= TGC.MEMBER_WEEKS or (not establishedOnly and attended > 0)
         if include then
           wins = wins + taken
@@ -189,18 +204,19 @@ end
 
 -- responses: { key, name, class, spec, choice, roll, unclear }
 -- players: map keyed by TGC.Key. isGuild(key, player) -> boolean.
-function TGC.Evaluate(responses, players, weekNow, tier, lockoutId, isGuild)
+function TGC.Evaluate(responses, players, weekNow, tier, lockoutId, isGuild, group)
   players = players or {}
   isGuild = isGuild or function() return false end
-  local guildAvg = TGC.GuildAverage(players, weekNow, tier, isGuild)
+  local guildAvg = TGC.GuildAverage(players, weekNow, tier, isGuild, group)
   local ms, os, rows = {}, {}, {}
 
   local function fill(response)
     local player = players[response.key] or {}
-    local weeks, wins, personal, raids = TGC.TrackStats(player, weekNow, tier)
+    local sheet = TGC.Sheet(player, group)
+    local weeks, wins, personal, raids = TGC.TrackStats(sheet, weekNow, tier)
     local status = TGC.MemberStatus(weeks, isGuild(response.key, player) and true or false, raids)
     local rate = TGC.EffectiveRate(status, personal, guildAvg)
-    local current = TGC.PlayerCurrent(player, lockoutId, tier)
+    local current = TGC.PlayerCurrent(sheet, lockoutId, tier)
     return {
       key = response.key,
       name = response.name or player.name or response.key,
@@ -422,6 +438,22 @@ function TGC.SelfTest()
   check(TGC.AwardPlus({ priority = "MS", contested = true }, false), "contested main spec counts")
   check(TGC.AwardPlus({ priority = "MS", contested = false }, true), "an officer redirect of a free main spec counts")
   check(not TGC.AwardPlus({ priority = "OS", contested = true }, true), "off spec never counts")
+
+  local mia = blank("Mia", true)
+  for week = 97, 100 do attend(mia, week, "m" .. week) end
+  win(mia, 100, false, "m100")
+  mia.tracks = { alt = { weeks = {}, raids = {}, wins = {}, current = { lockout = "", tier = 0, other = 0 } } }
+  for week = 97, 100 do
+    mia.tracks.alt.weeks[#mia.tracks.alt.weeks + 1] = week
+    mia.tracks.alt.raids[#mia.tracks.alt.raids + 1] = { w = week, id = "alt" .. week }
+  end
+  mia.tracks.alt.wins[1] = { w = 99, tier = false, item = 1, t = 99, lockout = "alt99", spec = "MS", plus = true, n = 1 }
+  mia.tracks.alt.wins[2] = { w = 100, tier = false, item = 1, t = 100, lockout = "alt100", spec = "MS", plus = true, n = 2 }
+  local mainEval = TGC.Evaluate({ { key = "mia", name = "Mia", choice = "MS" } }, { mia = mia }, 100, false, "none", guild, "default")
+  local altEval = TGC.Evaluate({ { key = "mia", name = "Mia", choice = "MS" } }, { mia = mia }, 100, false, "none", guild, "alt")
+  check(mainEval.rows[1] and math.abs(mainEval.rows[1].rate - 0.25) < 1e-9, "default group rate stays on the player")
+  check(altEval.rows[1] and math.abs(altEval.rows[1].rate - 0.5) < 1e-9, "alt group rate uses its own sheet")
+  check(mainEval.rows[1] and altEval.rows[1] and mainEval.rows[1].status == "established" and altEval.rows[1].status == "established", "guild flag stays on the player")
 
   if TGC.CodecTest then
     local ok, err = TGC.CodecTest()

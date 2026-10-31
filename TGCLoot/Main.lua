@@ -26,16 +26,19 @@ local function OnEvent(_, event, ...)
       if C_Timer then C_Timer.After(3, HelloLoop) end
     end
     Refresh()
+    if TGC.UI and TGC.UI.MaybeTrackPrompt then TGC.UI.MaybeTrackPrompt() end
   elseif event == "PLAYER_GUILD_UPDATE" then
     TGC.BindGuild()
     TGC.RefreshRoster()
     Refresh()
+    if TGC.UI and TGC.UI.MaybeTrackPrompt then TGC.UI.MaybeTrackPrompt() end
   elseif event == "GUILD_ROSTER_UPDATE" then
     TGC.ReadRoster()
     TGC.BindGuild()
     Refresh()
   elseif event == "GROUP_ROSTER_UPDATE" then
     Refresh()
+    if TGC.UI and TGC.UI.MaybeTrackPrompt then TGC.UI.MaybeTrackPrompt() end
   elseif event == "CHAT_MSG_ADDON" then
     if TGC.Comm and TGC.Comm.OnMessage then TGC.Comm.OnMessage(...) end
   elseif event == "CHAT_MSG_SYSTEM" then
@@ -66,8 +69,8 @@ end
 local function Help()
   TGC.Print("Open the window with /tgcloot or /tgc.")
   TGC.Print("/tgcloot spec Fury — declare your main spec.")
-  TGC.Print("/tgcloot lockout MC — start a lockout and take attendance.")
-  TGC.Print("/tgcloot attendance — record raiders who joined after the start.")
+  TGC.Print("/tgcloot lockout MC — start a dated lockout on the active raid group.")
+  TGC.Print("/tgcloot attendance — review who is here. First and last name required.")
   TGC.Print("/tgcloot push — send the full record. /tgcloot pull — take a newer one.")
   TGC.Print("/tgcloot scores — print scores. /tgcloot void Name 12 reason — exceptional correction.")
   TGC.Print("/tgcloot test — run the rules self-test. /tgcloot debug — show who can edit.")
@@ -88,6 +91,7 @@ local function Scores()
     TGC.Print("No raiders in the record yet.")
     return
   end
+  TGC.Print("Scores for raid group " .. (TGC.ActiveGroup and TGC.ActiveGroup() or "default") .. ".")
   local limit = #rows
   if limit > 40 then limit = 40 end
   for index = 1, limit do
@@ -109,8 +113,8 @@ local function Debug(rest)
   TGC.Print(string.format("You: %s. Guild: %s. Raid leader: %s. Officer: %s.",
     tostring(TGC.PlayerName()), tostring(TGC.GuildName()), tostring(TGC.LeaderName()), tostring(TGC.IsOfficer())))
   TGC.Print(ok and "This character can change the loot record." or (why or "View only."))
-  TGC.Print(string.format("Revision %s. Guild roster names loaded: %d. Session changed: %s.",
-    tostring(TGC.db and TGC.db.rev), count, tostring(TGC.sessionDirty)))
+  TGC.Print(string.format("Revision %s. Group %s. Guild roster names loaded: %d. Session changed: %s.",
+    tostring(TGC.db and TGC.db.rev), TGC.ActiveGroup and TGC.ActiveGroup() or "default", count, tostring(TGC.sessionDirty)))
   if rest and rest ~= "" then
     local member, unclear = TGC.ResolveMember(rest)
     local found = member and member.name or "nobody"

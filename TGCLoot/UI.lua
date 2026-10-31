@@ -397,6 +397,15 @@ function UI.RefreshButtons()
   Arm(UI.saveSettings, can)
   Arm(UI.showRecord, TGC.db ~= nil)
   Arm(UI.replace, can)
+  Arm(UI.adminUse, can)
+  Arm(UI.adminGuildBtn, can and UI.adminPick)
+  Arm(UI.adminGuestBtn, can and UI.adminPick)
+  Arm(UI.adminSpecBtn, can and UI.adminPick)
+  Arm(UI.adminAdd, can)
+  Arm(UI.adminRemoveRun, can and UI.runPick)
+  Arm(UI.adminAttendOne, can and UI.adminPick)
+  Arm(UI.adminClear, can and UI.adminPick)
+  Arm(UI.adminAttend, can)
   if popup then
     Arm(UI.popupMs, open, TGC.watch and TGC.watch.mine == "MS")
     Arm(UI.popupOs, open, TGC.watch and TGC.watch.mine == "OS")
@@ -453,7 +462,9 @@ local function PaintRoll()
   local lock = TGC.db and TGC.db.lockout
   if lock and lock.id ~= "" then
     local label = lock.label ~= "" and lock.label or lock.id
-    UI.lockLabel:SetText(string.format("Lockout %s, week %d.", label, lock.week or 0))
+    local when = TGC.FormatWhen and TGC.FormatWhen(lock.started) or ""
+    local group = TGC.ActiveGroup and TGC.ActiveGroup() or "default"
+    UI.lockLabel:SetText(string.format("%s, week %d, %s. Group %s.", label, lock.week or 0, when ~= "" and when or "no time", group))
   else
     UI.lockLabel:SetText("No lockout yet. Starting a roll will open one.")
   end
@@ -575,6 +586,77 @@ local function PaintNotes()
   end)
 end
 
+local function GuildWord(guild)
+  if guild == true then return "Guild" end
+  if guild == false then return "Guest" end
+  return "Unknown"
+end
+
+local function PaintAdmin()
+  if not UI.adminRows then return end
+  local group = TGC.ActiveGroup and TGC.ActiveGroup() or "default"
+  local lock = TGC.db and TGC.db.lockout
+  local when = lock and TGC.FormatWhen and TGC.FormatWhen(lock.started) or ""
+  local label = lock and lock.id ~= "" and (lock.label ~= "" and lock.label or lock.id) or "No run open"
+  UI.adminStatus:SetText(string.format("Active group %s. %s%s.", group, label, when ~= "" and (", " .. when) or ""))
+  if UI.adminGroup and UI.adminGroup:GetText() == "" and not UI.adminGroup:HasFocus() then
+    UI.adminGroup:SetText(group)
+  end
+  local rows = {}
+  local weekNow = TGC.CurrentWeek and TGC.CurrentWeek() or 0
+  for key, player in pairs(TGC.db and TGC.db.players or {}) do
+    local sheet = TGC.Sheet and TGC.Sheet(player, group) or player
+    local weeks, otherWins = TGC.TrackStats(sheet, weekNow, false)
+    local _, tierWins = TGC.TrackStats(sheet, weekNow, true)
+    rows[#rows + 1] = {
+      key = key, name = player.name, class = player.class, spec = player.spec or "",
+      guild = player.guild, weeks = weeks, wins = (otherWins or 0) + (tierWins or 0),
+    }
+  end
+  table.sort(rows, function(a, b) return (a.name or "") < (b.name or "") end)
+  local filter = UI.adminFilter and UI.adminFilter:GetText():lower() or ""
+  if filter ~= "" then
+    local kept = {}
+    for _, row in ipairs(rows) do
+      local name = (row.name or ""):lower()
+      if name:find(filter, 1, true) then kept[#kept + 1] = row end
+    end
+    rows = kept
+  end
+  local offset = ClampScroll("admin", #rows)
+  Fill(UI.adminRows, rows, offset, function(item)
+    return UI.adminPick and item.key == UI.adminPick.key
+  end, function(row, item)
+    local r, g, b = ClassRGB(item.class)
+    row.labels.name:SetText(item.name or "")
+    row.labels.name:SetTextColor(r, g, b)
+    row.labels.class:SetText(item.class or "")
+    row.labels.spec:SetText(item.spec ~= "" and item.spec or "-")
+    row.labels.guild:SetText(GuildWord(item.guild))
+    row.labels.weeks:SetText(tostring(item.weeks or 0))
+    row.labels.wins:SetText(tostring(item.wins or 0))
+    row.tip = string.format("%s. %s. %d weeks and %d contested wins on %s in the current window.",
+      item.name or "", GuildWord(item.guild), item.weeks or 0, item.wins or 0, group)
+  end)
+  local player = UI.adminPick and TGC.db and TGC.db.players[UI.adminPick.key]
+  if player and UI.adminSpec then SetIdle(UI.adminSpec, player.spec or "") end
+  if player then
+    UI.adminDetail:SetText(string.format("%s. %s. Weeks and wins above are for group %s.", player.name or "", GuildWord(player.guild), group))
+  else
+    UI.adminDetail:SetText("Select a player. Weeks and wins are for the active raid group only.")
+  end
+  local runs = player and TGC.AttendanceRows and TGC.AttendanceRows(player.name, group) or {}
+  local runOffset = ClampScroll("runs", #runs)
+  Fill(UI.adminRuns, runs, runOffset, function(item)
+    return UI.runPick and item.id == UI.runPick.id
+  end, function(row, item)
+    row.labels.when:SetText(item.when ~= "" and item.when or "No time")
+    row.labels.week:SetText(tostring(item.week or ""))
+    row.labels.id:SetText(item.id or "")
+    row.tip = (item.when ~= "" and item.when or "No time") .. " week " .. tostring(item.week or "") .. " " .. (item.id or "")
+  end)
+end
+
 local function PaintTabs()
   for _, tab in ipairs(UI.tabs) do
     local on = UI.tab == tab.key
@@ -595,7 +677,8 @@ function UI.Refresh()
   if UI.tab == "roll" then PaintRoll()
   elseif UI.tab == "roster" then PaintRoster()
   elseif UI.tab == "history" then PaintHistory()
-  elseif UI.tab == "notes" then PaintNotes() end
+  elseif UI.tab == "notes" then PaintNotes()
+  elseif UI.tab == "admin" then PaintAdmin() end
   UI.RefreshButtons()
   if popup and popup:IsShown() then UI.UpdatePopup() end
 end
@@ -922,9 +1005,128 @@ local function BuildNotes(page)
   end)
 end
 
+local function BuildAdmin(page)
+  UI.adminGroup = Edit(page, 120, 20)
+  UI.adminGroup:SetPoint("TOPLEFT", 0, 0)
+  UI.adminUse = Button(page, "Use group", 90)
+  UI.adminUse:SetPoint("LEFT", UI.adminGroup, "RIGHT", 6, 0)
+  UI.adminUse:SetScript("OnClick", function() TGC.UseGroup(UI.adminGroup:GetText()) end)
+  UI.adminAttend = Button(page, "Take attendance", 120)
+  UI.adminAttend:SetPoint("LEFT", UI.adminUse, "RIGHT", 6, 0)
+  UI.adminAttend:SetScript("OnClick", function() TGC.RecordAttendance() end)
+  UI.adminStatus = Label(page, 12)
+  UI.adminStatus:SetPoint("TOPLEFT", 0, -26)
+  UI.adminStatus:SetWidth(560)
+  UI.adminStatus:SetWordWrap(false)
+  UI.adminFilter = Edit(page, 180, 20)
+  UI.adminFilter:SetPoint("TOPLEFT", 0, -48)
+  UI.adminFilter:SetScript("OnTextChanged", function(self)
+    local text = self:GetText()
+    if text == UI.adminFilterText then return end
+    UI.adminFilterText = text
+    UI.scroll.admin = 0
+    UI.Refresh()
+  end)
+  local filterLabel = Label(page, 11)
+  filterLabel:SetPoint("LEFT", UI.adminFilter, "RIGHT", 6, 0)
+  filterLabel:SetText("Players on this group")
+  filterLabel:SetTextColor(COLORS.dim[1], COLORS.dim[2], COLORS.dim[3])
+  UI.adminRows = MakeList(page, 8, {
+    { key = "name", title = "Name", width = 170 },
+    { key = "class", title = "Class", width = 90 },
+    { key = "spec", title = "Spec", width = 80 },
+    { key = "guild", title = "Guild", width = 70 },
+    { key = "weeks", title = "Weeks", width = 60 },
+    { key = "wins", title = "Wins", width = 60 },
+  }, -74, "admin", function(data)
+    if not UI.adminPick or UI.adminPick.key ~= data.key then UI.runPick = nil end
+    UI.adminPick = data
+    UI.Refresh()
+  end)
+  UI.adminDetail = Label(page, 12)
+  UI.adminDetail:SetPoint("TOPLEFT", 0, -240)
+  UI.adminDetail:SetWidth(560)
+  UI.adminDetail:SetHeight(18)
+  UI.adminDetail:SetWordWrap(false)
+  UI.adminGuildBtn = Button(page, "Mark guild", 90)
+  UI.adminGuildBtn:SetPoint("TOPLEFT", 0, -262)
+  UI.adminGuildBtn:SetScript("OnClick", function()
+    local player = UI.adminPick and TGC.db and TGC.db.players[UI.adminPick.key]
+    if player then TGC.SetGuildFlag(player.name, true) end
+  end)
+  UI.adminGuestBtn = Button(page, "Mark guest", 90)
+  UI.adminGuestBtn:SetPoint("LEFT", UI.adminGuildBtn, "RIGHT", 4, 0)
+  UI.adminGuestBtn:SetScript("OnClick", function()
+    local player = UI.adminPick and TGC.db and TGC.db.players[UI.adminPick.key]
+    if player then TGC.SetGuildFlag(player.name, false) end
+  end)
+  UI.adminSpec = Edit(page, 120, 20)
+  UI.adminSpec:SetPoint("LEFT", UI.adminGuestBtn, "RIGHT", 8, 0)
+  UI.adminSpecBtn = Button(page, "Save spec", 80)
+  UI.adminSpecBtn:SetPoint("LEFT", UI.adminSpec, "RIGHT", 4, 0)
+  UI.adminSpecBtn:SetScript("OnClick", function()
+    local player = UI.adminPick and TGC.db and TGC.db.players[UI.adminPick.key]
+    if player then TGC.SetSpec(player.name, UI.adminSpec:GetText()) end
+  end)
+  UI.adminName = Edit(page, 180, 20)
+  UI.adminName:SetPoint("TOPLEFT", 0, -286)
+  UI.adminClass = Edit(page, 100, 20)
+  UI.adminClass:SetPoint("LEFT", UI.adminName, "RIGHT", 4, 0)
+  UI.adminGuild = Check(page, "Guild", 70)
+  UI.adminGuild:SetPoint("LEFT", UI.adminClass, "RIGHT", 8, 0)
+  UI.adminGuild:SetChecked(true)
+  UI.adminGuild:SetScript("OnClick", function(self) self:SetChecked(not self.checked) end)
+  UI.adminAdd = Button(page, "Add player", 90)
+  UI.adminAdd:SetPoint("LEFT", UI.adminGuild, "RIGHT", 6, 0)
+  UI.adminAdd:SetScript("OnClick", function()
+    local name = UI.adminName:GetText()
+    if TGC.AddPlayer(name, UI.adminClass:GetText(), UI.adminGuild:GetChecked()) then
+      local full = TGC.ValidFullName(name)
+      UI.adminPick = { key = TGC.Key(full or name) }
+      UI.runPick = nil
+      UI.Refresh()
+    end
+  end)
+  local attendLabel = Label(page, 11)
+  attendLabel:SetPoint("TOPLEFT", 0, -314)
+  attendLabel:SetText("Attendance on this group")
+  attendLabel:SetTextColor(COLORS.dim[1], COLORS.dim[2], COLORS.dim[3])
+  UI.adminRuns = MakeList(page, 5, {
+    { key = "when", title = "When", width = 180 },
+    { key = "week", title = "Week", width = 70 },
+    { key = "id", title = "Run", width = 220 },
+  }, -332, "runs", function(data) UI.runPick = data UI.Refresh() end)
+  UI.adminRemoveRun = Button(page, "Remove run", 100)
+  UI.adminRemoveRun:SetPoint("TOPLEFT", 0, -442)
+  UI.adminRemoveRun:SetScript("OnClick", function()
+    local player = UI.adminPick and TGC.db and TGC.db.players[UI.adminPick.key]
+    if player and UI.runPick then TGC.RemoveAttendance(player.name, UI.runPick.id) end
+  end)
+  UI.adminAttendOne = Button(page, "Add to this run", 120)
+  UI.adminAttendOne:SetPoint("LEFT", UI.adminRemoveRun, "RIGHT", 4, 0)
+  UI.adminAttendOne:SetScript("OnClick", function()
+    local player = UI.adminPick and TGC.db and TGC.db.players[UI.adminPick.key]
+    if player then TGC.AttendOne(player.name, player.class, player.guild) end
+  end)
+  UI.adminClear = Button(page, "Clear attendance", 130)
+  UI.adminClear:SetPoint("LEFT", UI.adminAttendOne, "RIGHT", 4, 0)
+  UI.adminClear:SetScript("OnClick", function()
+    local player = UI.adminPick and TGC.db and TGC.db.players[UI.adminPick.key]
+    if player then TGC.ClearAttendance(player.name) end
+  end)
+  local hint = Label(page, 11)
+  hint:SetPoint("TOPLEFT", 0, -468)
+  hint:SetWidth(560)
+  hint:SetHeight(36)
+  hint:SetWordWrap(true)
+  hint:SetJustifyV("TOP")
+  hint:SetText("New players need a first and last name. Clearing attendance changes the 6-week rate and does not void items. Void stays on History.")
+  hint:SetTextColor(COLORS.dim[1], COLORS.dim[2], COLORS.dim[3])
+end
+
 local function BuildMain()
   main = CreateFrame("Frame", "TGCLootFrame", UIParent, "BackdropTemplate")
-  main:SetSize(600, 572)
+  main:SetSize(600, 640)
   main:SetFrameStrata("DIALOG")
   main:SetMovable(true)
   main:SetClampedToScreen(true)
@@ -967,10 +1169,11 @@ local function BuildMain()
     { key = "roster", label = "Roster" },
     { key = "history", label = "History" },
     { key = "notes", label = "Notes" },
+    { key = "admin", label = "Admin" },
   }
   for index, info in ipairs(keys) do
-    local button = Button(main, info.label, 88, 22)
-    button:SetPoint("TOPLEFT", 12 + (index - 1) * 94, -58)
+    local button = Button(main, info.label, 104, 22)
+    button:SetPoint("TOPLEFT", 12 + (index - 1) * 112, -58)
     button:SetScript("OnClick", function() SelectTab(info.key) end)
     UI.tabs[index] = { key = info.key, button = button }
     local page = CreateFrame("Frame", nil, main)
@@ -985,6 +1188,7 @@ local function BuildMain()
   BuildRoster(UI.pages.roster)
   BuildHistory(UI.pages.history)
   BuildNotes(UI.pages.notes)
+  BuildAdmin(UI.pages.admin)
   UI.tab = "roll"
   main:Hide()
 end
@@ -1242,11 +1446,263 @@ function UI.ShowPopup()
   UI.UpdatePopup()
 end
 
+local trackPrompt, attendFrame
+
+local function BuildTrackPrompt()
+  trackPrompt = CreateFrame("Frame", "TGCLootTrackPrompt", UIParent, "BackdropTemplate")
+  trackPrompt:SetSize(420, 188)
+  trackPrompt:SetFrameStrata("DIALOG")
+  trackPrompt:SetFrameLevel((main and main:GetFrameLevel() or 0) + 30)
+  trackPrompt:SetMovable(true)
+  trackPrompt:SetClampedToScreen(true)
+  trackPrompt:SetBackdrop(Backdrop())
+  Paint(trackPrompt, COLORS.bg, COLORS.edge, 0.98)
+  RestorePoint(trackPrompt, "track", 0, 80)
+  Special("TGCLootTrackPrompt")
+  local drag = CreateFrame("Frame", nil, trackPrompt)
+  drag:SetPoint("TOPLEFT")
+  drag:SetPoint("TOPRIGHT", -24, 0)
+  drag:SetHeight(24)
+  drag:EnableMouse(true)
+  drag:RegisterForDrag("LeftButton")
+  drag:SetScript("OnDragStart", function() trackPrompt:StartMoving() end)
+  drag:SetScript("OnDragStop", function()
+    trackPrompt:StopMovingOrSizing()
+    SavePoint(trackPrompt, "track")
+  end)
+  local title = Label(trackPrompt, 14)
+  title:SetPoint("TOPLEFT", 12, -6)
+  title:SetText("Track this run?")
+  title:SetTextColor(COLORS.gold[1], COLORS.gold[2], COLORS.gold[3])
+  local close = Button(trackPrompt, "X", 18, 16)
+  close:SetPoint("TOPRIGHT", -4, -4)
+  close:SetScript("OnClick", function()
+    if TGC.saved and TGC.saved.ui then TGC.saved.ui.trackKey = "asked" end
+    trackPrompt:Hide()
+  end)
+  local body = Label(trackPrompt, 12)
+  body:SetPoint("TOPLEFT", 12, -32)
+  body:SetWidth(396)
+  body:SetHeight(36)
+  body:SetWordWrap(true)
+  body:SetJustifyV("TOP")
+  body:SetText("You are leading this group. Use TGC Loot to track loot and attendance for this run?")
+  local nameLabel = Label(trackPrompt, 11)
+  nameLabel:SetPoint("TOPLEFT", 12, -74)
+  nameLabel:SetText("Run name")
+  nameLabel:SetTextColor(COLORS.dim[1], COLORS.dim[2], COLORS.dim[3])
+  UI.trackName = Edit(trackPrompt, 220, 20)
+  UI.trackName:SetPoint("LEFT", nameLabel, "RIGHT", 8, 0)
+  UI.trackName:SetText("Raid")
+  local note = Label(trackPrompt, 11)
+  note:SetPoint("TOPLEFT", 12, -102)
+  note:SetWidth(396)
+  note:SetHeight(32)
+  note:SetWordWrap(true)
+  note:SetJustifyV("TOP")
+  note:SetText("Scores for this run stay on the active raid group. The default group is separate from any later group.")
+  note:SetTextColor(COLORS.dim[1], COLORS.dim[2], COLORS.dim[3])
+  local yes = Button(trackPrompt, "Track this run", 130)
+  yes:SetPoint("BOTTOMLEFT", 12, 12)
+  yes:SetScript("OnClick", function()
+    if TGC.saved and TGC.saved.ui then TGC.saved.ui.trackKey = "asked" end
+    local label = UI.trackName:GetText()
+    trackPrompt:Hide()
+    TGC.BeginTracking(label)
+  end)
+  local no = Button(trackPrompt, "Not now", 90)
+  no:SetPoint("LEFT", yes, "RIGHT", 8, 0)
+  no:SetScript("OnClick", function()
+    if TGC.saved and TGC.saved.ui then TGC.saved.ui.trackKey = "asked" end
+    trackPrompt:Hide()
+  end)
+  trackPrompt:Hide()
+  trackPrompt:SetScript("OnHide", function()
+    if TGC.InGroup() and TGC.saved and TGC.saved.ui then TGC.saved.ui.trackKey = "asked" end
+  end)
+  UI.track = trackPrompt
+end
+
+local function PlaceAttendThumb()
+  if not UI.attendScroll or not UI.attendThumb or not UI.attendTrack then return end
+  local range = UI.attendScroll:GetVerticalScrollRange() or 0
+  local height = UI.attendScroll:GetHeight()
+  if height < 1 then height = 1 end
+  local thumb = height
+  local offset = 0
+  if range > 0 then
+    thumb = math.max(24, height * (height / (height + range)))
+    if thumb > height then thumb = height end
+    offset = UI.attendScroll:GetVerticalScroll() / range * (height - thumb)
+  end
+  UI.attendThumb:SetHeight(thumb)
+  UI.attendThumb:ClearAllPoints()
+  UI.attendThumb:SetPoint("TOPLEFT", UI.attendTrack, "TOPLEFT", 0, -offset)
+end
+
+local function FillAttendance(force)
+  if not attendFrame then return end
+  local lock = TGC.db and TGC.db.lockout
+  local when = lock and TGC.FormatWhen and TGC.FormatWhen(lock.started) or ""
+  local label = lock and lock.id ~= "" and (lock.label ~= "" and lock.label or lock.id) or "No run open"
+  local group = TGC.ActiveGroup and TGC.ActiveGroup() or "default"
+  UI.attendWhen:SetText(string.format("%s. %s. Group %s.", label, when ~= "" and when or "Not started", group))
+  local draft = TGC.AttendanceDraft and TGC.AttendanceDraft() or {}
+  UI.attendDraft = draft
+  local height = math.max(#draft * 24, 24)
+  UI.attendChild:SetHeight(height)
+  for index, row in ipairs(UI.attendRows) do
+    local item = draft[index]
+    if not item then
+      row:Hide()
+    else
+      local wasHidden = not row:IsShown()
+      row:Show()
+      row.unit:SetText(item.unit or "")
+      row.classFile = item.class
+      if not row.name:HasFocus() and (force or wasHidden or row.name:GetText() == "") then
+        row.name:SetText(item.name or "")
+      end
+    end
+  end
+  if UI.attendScroll.UpdateScrollChildRect then UI.attendScroll:UpdateScrollChildRect() end
+  PlaceAttendThumb()
+end
+
+local function BuildAttendance()
+  attendFrame = CreateFrame("Frame", "TGCLootAttend", UIParent, "BackdropTemplate")
+  attendFrame:SetSize(460, 420)
+  attendFrame:SetFrameStrata("DIALOG")
+  attendFrame:SetFrameLevel((main and main:GetFrameLevel() or 0) + 25)
+  attendFrame:SetMovable(true)
+  attendFrame:SetClampedToScreen(true)
+  attendFrame:SetBackdrop(Backdrop())
+  Paint(attendFrame, COLORS.bg, COLORS.edge, 0.98)
+  RestorePoint(attendFrame, "attend", 240, 10)
+  Special("TGCLootAttend")
+  local drag = CreateFrame("Frame", nil, attendFrame)
+  drag:SetPoint("TOPLEFT")
+  drag:SetPoint("TOPRIGHT", -24, 0)
+  drag:SetHeight(24)
+  drag:EnableMouse(true)
+  drag:RegisterForDrag("LeftButton")
+  drag:SetScript("OnDragStart", function() attendFrame:StartMoving() end)
+  drag:SetScript("OnDragStop", function()
+    attendFrame:StopMovingOrSizing()
+    SavePoint(attendFrame, "attend")
+  end)
+  local title = Label(attendFrame, 14)
+  title:SetPoint("TOPLEFT", 12, -6)
+  title:SetText("Take attendance")
+  title:SetTextColor(COLORS.gold[1], COLORS.gold[2], COLORS.gold[3])
+  local close = Button(attendFrame, "X", 18, 16)
+  close:SetPoint("TOPRIGHT", -4, -4)
+  close:SetScript("OnClick", function() attendFrame:Hide() end)
+  UI.attendWhen = Label(attendFrame, 12)
+  UI.attendWhen:SetPoint("TOPLEFT", 12, -28)
+  UI.attendWhen:SetWidth(420)
+  UI.attendWhen:SetWordWrap(false)
+  local scroll = CreateFrame("ScrollFrame", nil, attendFrame)
+  scroll:SetPoint("TOPLEFT", 12, -52)
+  scroll:SetPoint("BOTTOMRIGHT", -28, 64)
+  local child = CreateFrame("Frame", nil, scroll)
+  child:SetSize(400, 24)
+  scroll:SetScrollChild(child)
+  UI.attendScroll = scroll
+  UI.attendChild = child
+  UI.attendRows = {}
+  for index = 1, 40 do
+    local row = CreateFrame("Frame", nil, child)
+    row:SetSize(400, 22)
+    row:SetPoint("TOPLEFT", 0, -((index - 1) * 24))
+    row.unit = Label(row, 11)
+    row.unit:SetPoint("LEFT", 0, 0)
+    row.unit:SetWidth(130)
+    row.unit:SetWordWrap(false)
+    row.name = Edit(row, 250, 20)
+    row.name:SetPoint("LEFT", 136, 0)
+    row:Hide()
+    UI.attendRows[index] = row
+  end
+  scroll:EnableMouseWheel(true)
+  scroll:SetScript("OnMouseWheel", function(self, delta)
+    local current = self:GetVerticalScroll() or 0
+    local nextOffset = current - delta * 24
+    local maxScroll = self:GetVerticalScrollRange() or 0
+    if nextOffset < 0 then nextOffset = 0 end
+    if nextOffset > maxScroll then nextOffset = maxScroll end
+    self:SetVerticalScroll(nextOffset)
+    PlaceAttendThumb()
+  end)
+  UI.attendTrack = attendFrame:CreateTexture(nil, "ARTWORK")
+  UI.attendTrack:SetPoint("TOPLEFT", scroll, "TOPRIGHT", 6, 0)
+  UI.attendTrack:SetPoint("BOTTOMLEFT", scroll, "BOTTOMRIGHT", 6, 0)
+  UI.attendTrack:SetWidth(8)
+  UI.attendTrack:SetColorTexture(COLORS.inset[1], COLORS.inset[2], COLORS.inset[3], 1)
+  UI.attendThumb = attendFrame:CreateTexture(nil, "OVERLAY")
+  UI.attendThumb:SetWidth(8)
+  UI.attendThumb:SetHeight(40)
+  UI.attendThumb:SetColorTexture(COLORS.gold[1], COLORS.gold[2], COLORS.gold[3], 1)
+  local hint = Label(attendFrame, 11)
+  hint:SetPoint("BOTTOMLEFT", 12, 36)
+  hint:SetWidth(430)
+  hint:SetText("Type a first and last name for each raider. A first name alone is not saved.")
+  hint:SetTextColor(COLORS.dim[1], COLORS.dim[2], COLORS.dim[3])
+  local save = Button(attendFrame, "Save attendance", 130)
+  save:SetPoint("BOTTOMLEFT", 12, 10)
+  save:SetScript("OnClick", function()
+    local entries = {}
+    for index, row in ipairs(UI.attendRows) do
+      if row:IsShown() then
+        local item = UI.attendDraft and UI.attendDraft[index]
+        entries[#entries + 1] = { name = row.name:GetText(), class = item and item.class or row.classFile }
+      end
+    end
+    TGC.SaveAttendance(entries)
+  end)
+  local refresh = Button(attendFrame, "Refresh names", 120)
+  refresh:SetPoint("LEFT", save, "RIGHT", 6, 0)
+  refresh:SetScript("OnClick", function() FillAttendance(true) end)
+  attendFrame:Hide()
+end
+
+function UI.ShowTrackPrompt()
+  if not TGC.ShouldOfferTrack or not TGC.ShouldOfferTrack() then return end
+  UI.Init()
+  if not UI.ready then return end
+  if not trackPrompt then BuildTrackPrompt() end
+  if trackPrompt:IsShown() then return end
+  if UI.trackName:GetText() == "" then UI.trackName:SetText("Raid") end
+  trackPrompt:Show()
+end
+
+function UI.MaybeTrackPrompt()
+  if not TGC.saved then return end
+  TGC.saved.ui = TGC.saved.ui or {}
+  if not TGC.InGroup() then
+    TGC.saved.ui.trackKey = nil
+    if trackPrompt and trackPrompt:IsShown() then trackPrompt:Hide() end
+    return
+  end
+  if TGC.saved.ui.trackKey == "asked" then return end
+  if not TGC.ShouldOfferTrack or not TGC.ShouldOfferTrack() then return end
+  UI.ShowTrackPrompt()
+end
+
+function UI.ShowAttendance()
+  UI.Init()
+  if not UI.ready then return end
+  local fresh = not attendFrame or not attendFrame:IsShown()
+  if not attendFrame then BuildAttendance() end
+  FillAttendance(fresh)
+  attendFrame:Show()
+end
+
 function UI.Init()
   if UI.ready or not CreateFrame or not UIParent then return end
   UI.font = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
-  UI.scroll = { roll = 0, roster = 0, history = 0, notes = 0, popup = 0 }
-  UI.visible = { roll = 10, roster = 12, history = 12, notes = 5, popup = 8 }
+  UI.scroll = { roll = 0, roster = 0, history = 0, notes = 0, popup = 0, admin = 0, runs = 0 }
+  UI.visible = { roll = 10, roster = 12, history = 12, notes = 5, popup = 8, admin = 8, runs = 5 }
   UI.counts = {}
   UI.names = {}
   UI.tab = "roll"

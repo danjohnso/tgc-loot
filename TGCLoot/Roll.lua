@@ -111,7 +111,8 @@ function Roll.Compute()
     TGC.CurrentWeek(),
     TGC.session.tier,
     TGC.db.lockout and TGC.db.lockout.id or "",
-    isGuild
+    isGuild,
+    TGC.ActiveGroup and TGC.ActiveGroup() or "default"
   )
   result.banner = ReservationNote(TGC.session.itemId) .. (result.banner or "")
   return result
@@ -279,8 +280,11 @@ function Roll.Start()
     local started = TGC.StartLockout("Raid")
     if not started then return end
   else
-    local lines = TGC.BuildAttendanceLines()
+    local lines, skipped = TGC.BuildAttendanceLines()
     for _, line in ipairs(lines) do TGC.Mutate(line) end
+    if skipped and skipped > 0 then
+      TGC.Print(skipped .. (skipped == 1 and " raider needs" or " raiders need") .. " a first and last name. Open Attendance to record them.")
+    end
   end
   local seconds = Roll.Seconds()
   TGC.session.id = math.random(100000, 999999)

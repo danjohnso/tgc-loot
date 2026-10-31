@@ -62,14 +62,17 @@ function TGC.Checksum(text)
 end
 
 function TGC.NewDB(guild)
+  local lockout = { id = "", label = "", week = 0, started = 0 }
   return {
     rev = 0,
     updated = 0,
     writer = "",
     guild = guild or "",
     nextWin = 0,
+    group = "default",
     settings = { seconds = 30, resetDay = 2, resetHour = 15, officerMax = 1 },
-    lockout = { id = "", label = "", week = 0, started = 0 },
+    lockout = lockout,
+    lockouts = { default = lockout },
     tierItems = {},
     players = {},
     reservations = {},
@@ -90,6 +93,14 @@ local function SortedKeys(map)
   for key in pairs(map or {}) do keys[#keys + 1] = key end
   table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
   return keys
+end
+
+-- Empty and missing mean the default raid group. Anything else must be a short id such as alt or 2nd-raid.
+local function GroupToken(name)
+  name = TGC.CleanTight(name or "", 24):lower()
+  if name == "" then return "default" end
+  if not name:match("^[%a%d][%a%d%-]*$") then return nil end
+  return name
 end
 
 local function EncodeWin(win)
@@ -124,9 +135,9 @@ local function DecodeWin(text)
   }
 end
 
-local function EncodePlayer(player)
+local function EncodeScore(sheet)
   local weeks, seen = {}, {}
-  for _, week in ipairs(player.weeks or {}) do
+  for _, week in ipairs(sheet and sheet.weeks or {}) do
     week = tonumber(week)
     if week and not seen[week] then
       seen[week] = true
@@ -136,15 +147,15 @@ local function EncodePlayer(player)
   table.sort(weeks, function(a, b) return tonumber(a) < tonumber(b) end)
 
   local raids = {}
-  for _, raid in ipairs(player.raids or {}) do
+  for _, raid in ipairs(sheet and sheet.raids or {}) do
     if raid.id and raid.id ~= "" then
-      raids[#raids + 1] = tostring(raid.w or 0) .. "^" .. TGC.CleanTight(raid.id, 24)
+      raids[#raids + 1] = tostring(raid.w or 0) .. "^" .. TGC.CleanTight(raid.id, 24) .. "^" .. tostring(tonumber(raid.t) or 0)
     end
   end
   table.sort(raids)
 
   local wins = {}
-  for _, win in ipairs(player.wins or {}) do wins[#wins + 1] = win end
+  for _, win in ipairs(sheet and sheet.wins or {}) do wins[#wins + 1] = win end
   table.sort(wins, function(a, b)
     if (a.t or 0) ~= (b.t or 0) then return (a.t or 0) < (b.t or 0) end
     return (a.n or 0) < (b.n or 0)
@@ -152,19 +163,41 @@ local function EncodePlayer(player)
   local packedWins = {}
   for _, win in ipairs(wins) do packedWins[#packedWins + 1] = EncodeWin(win) end
 
-  local current = player.current or {}
+  local current = sheet and sheet.current or {}
+  return table.concat(weeks, ","),
+    table.concat(raids, ","),
+    table.concat(packedWins, ","),
+    TGC.CleanTight(current.lockout, 24),
+    tostring(current.tier or 0),
+    tostring(current.other or 0)
+end
+
+local function SheetHasData(sheet)
+  if type(sheet) ~= "table" then return false end
+  if type(sheet.weeks) == "table" and #sheet.weeks > 0 then return true end
+  if type(sheet.raids) == "table" and #sheet.raids > 0 then return true end
+  if type(sheet.wins) == "table" and #sheet.wins > 0 then return true end
+  local current = sheet.current
+  if type(current) == "table" and ((current.lockout or "") ~= "" or (tonumber(current.tier) or 0) ~= 0 or (tonumber(current.other) or 0) ~= 0) then
+    return true
+  end
+  return false
+end
+
+local function EncodePlayer(player)
+  local weeks, raids, wins, lockout, tier, other = EncodeScore(player)
   return table.concat({
     TGC.Clean(player.name, 48),
     TGC.CleanTight(player.class, 16),
     TGC.CleanTight(player.spec, 24),
     player.guild == nil and "u" or (player.guild and "g" or "p"),
     tostring(player.joined or 0),
-    table.concat(weeks, ","),
-    table.concat(raids, ","),
-    table.concat(packedWins, ","),
-    TGC.CleanTight(current.lockout, 24),
-    tostring(current.tier or 0),
-    tostring(current.other or 0),
+    weeks,
+    raids,
+    wins,
+    lockout,
+    tier,
+    other,
   }, "|")
 end
 
@@ -182,51 +215,55 @@ local function UniqueNumbers(text, cap)
   return list
 end
 
-local function DecodePlayer(rest)
-  local fields = TGC.Split(rest, "|")
-  local name = TGC.Clean(fields[1], 48)
-  if name == "" then return nil end
-  local weeks = UniqueNumbers(fields[6], 40)
+local function DecodeScore(weeksText, raidsText, winsText, lockText, tierText, otherText)
+  local weeks = UniqueNumbers(weeksText, 40)
   local raids = {}
   local raidSeen = {}
-  for _, part in ipairs(TGC.Split(fields[7] or "", ",")) do
+  for _, part in ipairs(TGC.Split(raidsText or "", ",")) do
     if part ~= "" then
       local raidFields = TGC.Split(part, "^")
       local id = TGC.CleanTight(raidFields[2], 24)
       if id ~= "" and not raidSeen[id] then
         raidSeen[id] = true
-        raids[#raids + 1] = { w = TGC.Num(raidFields[1]), id = id }
+        raids[#raids + 1] = { w = TGC.Num(raidFields[1]), id = id, t = TGC.Num(raidFields[3]) }
       end
     end
   end
   while #raids > 40 do table.remove(raids, 1) end
 
   local wins = {}
-  for _, part in ipairs(TGC.Split(fields[8] or "", ",")) do
+  for _, part in ipairs(TGC.Split(winsText or "", ",")) do
     local win = part ~= "" and DecodeWin(part) or nil
     if win then wins[#wins + 1] = win end
   end
   while #wins > 80 do table.remove(wins, 1) end
 
-  local guildFlag = false
-  if fields[4] == "g" then guildFlag = true
-  elseif fields[4] == "u" then guildFlag = nil end
-
   return {
-    name = name,
-    class = TGC.CleanTight(fields[2], 16),
-    spec = TGC.CleanTight(fields[3], 24),
-    guild = guildFlag,
-    joined = TGC.Num(fields[5]),
     weeks = weeks,
     raids = raids,
     wins = wins,
     current = {
-      lockout = TGC.CleanTight(fields[9], 24),
-      tier = TGC.Num(fields[10]),
-      other = TGC.Num(fields[11]),
+      lockout = TGC.CleanTight(lockText, 24),
+      tier = TGC.Num(tierText),
+      other = TGC.Num(otherText),
     },
   }
+end
+
+local function DecodePlayer(rest)
+  local fields = TGC.Split(rest, "|")
+  local name = TGC.Clean(fields[1], 48)
+  if name == "" then return nil end
+  local guildFlag = false
+  if fields[4] == "g" then guildFlag = true
+  elseif fields[4] == "u" then guildFlag = nil end
+  local score = DecodeScore(fields[6], fields[7], fields[8], fields[9], fields[10], fields[11])
+  score.name = name
+  score.class = TGC.CleanTight(fields[2], 16)
+  score.spec = TGC.CleanTight(fields[3], 24)
+  score.guild = guildFlag
+  score.joined = TGC.Num(fields[5])
+  return score
 end
 
 function TGC.Encode(db, forSum)
@@ -241,6 +278,7 @@ function TGC.Encode(db, forSum)
       forSum and "" or TGC.Clean(db.writer, 48),
       TGC.Clean(db.guild, 64),
       tostring(db.nextWin or 0),
+      GroupToken(db.group) or "default",
     }, "|"),
     table.concat({
       tostring(settings.seconds or 30),
@@ -256,6 +294,24 @@ function TGC.Encode(db, forSum)
     }, "|"),
   }
 
+  local activeGroup = GroupToken(db.group) or "default"
+  for _, key in ipairs(SortedKeys(db.lockouts)) do
+    if key ~= activeGroup then
+      local other = db.lockouts[key]
+      local otherId = type(other) == "table" and TGC.CleanTight(other.id or "", 24) or ""
+      local token = GroupToken(key)
+      if token and token ~= activeGroup and otherId ~= "" then
+        lines[#lines + 1] = "B|" .. table.concat({
+          token,
+          otherId,
+          TGC.CleanTight(other.label, 40),
+          tostring(math.floor(tonumber(other.week) or 0)),
+          tostring(tonumber(other.started) or 0),
+        }, "|")
+      end
+    end
+  end
+
   local tierIds = {}
   for id, on in pairs(db.tierItems or {}) do
     local number = tonumber(id)
@@ -268,6 +324,25 @@ function TGC.Encode(db, forSum)
     local player = db.players[key]
     if type(player) == "table" and player.name and player.name ~= "" then
       lines[#lines + 1] = "P|" .. EncodePlayer(player)
+      if type(player.tracks) == "table" then
+        for _, trackName in ipairs(SortedKeys(player.tracks)) do
+          local token = GroupToken(trackName)
+          local track = player.tracks[trackName]
+          if token and token ~= "default" and SheetHasData(track) then
+            local weeks, raids, wins, trackLock, tier, other = EncodeScore(track)
+            lines[#lines + 1] = "K|" .. table.concat({
+              token,
+              TGC.Clean(player.name, 48),
+              weeks,
+              raids,
+              wins,
+              trackLock,
+              tier,
+              other,
+            }, "|")
+          end
+        end
+      end
     end
   end
 
@@ -321,6 +396,7 @@ function TGC.Decode(text)
   db.writer = TGC.Clean(header[3], 48)
   db.guild = TGC.Clean(header[4], 64)
   db.nextWin = math.floor(TGC.Num(header[5]))
+  db.group = GroupToken(header[6]) or "default"
 
   local settings = TGC.Split(lines[3] or "", "|")
   db.settings = {
@@ -337,6 +413,7 @@ function TGC.Decode(text)
     week = math.floor(TGC.Num(lockout[3])),
     started = TGC.Num(lockout[4]),
   }
+  db.lockouts = { [db.group] = db.lockout }
 
   local highest = db.nextWin
   for index = 5, #lines do
@@ -354,6 +431,40 @@ function TGC.Decode(text)
         if key then
           db.players[key] = player
           for _, win in ipairs(player.wins) do
+            if win.n > highest then highest = win.n end
+          end
+        end
+      elseif op == "B" then
+        local fields = TGC.Split(rest or "", "|")
+        local group = GroupToken(fields[1])
+        if group then
+          local id = TGC.CleanTight(fields[2], 24)
+          if fields[2] == nil or fields[2] == "" then
+            db.group = group
+            if type(db.lockouts[group]) ~= "table" then
+              db.lockouts[group] = { id = "", label = "", week = 0, started = 0 }
+            end
+            db.lockout = db.lockouts[group]
+          elseif id ~= "" then
+            db.lockouts[group] = {
+              id = id,
+              label = TGC.CleanTight(fields[3], 40),
+              week = math.floor(TGC.Num(fields[4])),
+              started = TGC.Num(fields[5]),
+            }
+            if group == db.group then db.lockout = db.lockouts[group] end
+          end
+        end
+      elseif op == "K" then
+        local fields = TGC.Split(rest or "", "|")
+        local group = GroupToken(fields[1])
+        local key = TGC.Key(fields[2])
+        local player = key and db.players[key]
+        if group and group ~= "default" and player then
+          local score = DecodeScore(fields[3], fields[4], fields[5], fields[6], fields[7], fields[8])
+          player.tracks = player.tracks or {}
+          player.tracks[group] = score
+          for _, win in ipairs(score.wins) do
             if win.n > highest then highest = win.n end
           end
         end
@@ -385,6 +496,7 @@ function TGC.Decode(text)
     end
   end
   db.nextWin = highest
+  if TGC.BindLockouts then TGC.BindLockouts(db) end
   return db
 end
 
@@ -394,16 +506,28 @@ function TGC.CodecTest()
   db.updated = 50
   db.writer = "Ada Wren"
   db.nextWin = 2
+  db.group = "default"
   db.settings = { seconds = 25, resetDay = 3, resetHour = 11, officerMax = 2 }
   db.lockout = { id = "abc", label = "MC", week = 100, started = 40 }
+  db.lockouts = { default = db.lockout, alt = { id = "alt1", label = "BWL", week = 100, started = 41 } }
   db.tierItems = { [19019] = true, [123] = true }
   db.players[TGC.Key("Ada Wren")] = {
     name = "Ada Wren", class = "WARRIOR", spec = "Fury", guild = true, joined = 10,
-    weeks = { 100, 99 }, raids = { { w = 100, id = "abc" } },
+    weeks = { 100, 99 }, raids = { { w = 100, id = "abc", t = 40 } },
     wins = {
       { w = 100, tier = true, item = 19019, t = 40, lockout = "abc", spec = "MS", plus = true, n = 2, reason = "", itemName = "Thunderfury" },
     },
     current = { lockout = "abc", tier = 1, other = 0 },
+    tracks = {
+      alt = {
+        weeks = { 100 },
+        raids = { { w = 100, id = "alt1", t = 41 } },
+        wins = {
+          { w = 100, tier = false, item = 50, t = 41, lockout = "alt1", spec = "MS", plus = true, n = 1, reason = "", itemName = "Claw" },
+        },
+        current = { lockout = "alt1", tier = 0, other = 1 },
+      },
+    },
   }
   db.players[TGC.Key("Bea Quinn")] = {
     name = "Bea Quinn", class = "PRIEST", spec = "", guild = nil, joined = 0,
@@ -414,16 +538,20 @@ function TGC.CodecTest()
 
   local again = TGC.Decode(TGC.Encode(db))
   if not again then return false, "decode failed" end
-  if again.rev ~= 4 or again.guild ~= "Test Guild" or again.nextWin ~= 2 then return false, "header" end
+  if again.rev ~= 4 or again.guild ~= "Test Guild" or again.nextWin ~= 2 or again.group ~= "default" then return false, "header" end
   if again.settings.seconds ~= 25 or again.settings.resetDay ~= 3 or again.settings.officerMax ~= 2 then return false, "settings" end
   if again.lockout.id ~= "abc" or again.lockout.label ~= "MC" or again.lockout.week ~= 100 then return false, "lockout" end
+  if not again.lockouts or not again.lockouts.alt or again.lockouts.alt.id ~= "alt1" or again.lockouts.alt.started ~= 41 then return false, "alt lockout" end
   if not again.tierItems[19019] or not again.tierItems[123] then return false, "tier items" end
   local player = again.players[TGC.Key("Ada Wren")]
   if not player or player.spec ~= "Fury" or not player.guild then return false, "player" end
   local bea = again.players[TGC.Key("Bea Quinn")]
   if not bea or bea.guild ~= nil then return false, "unknown guild flag" end
   if #player.weeks ~= 2 or #player.wins ~= 1 or not player.wins[1].plus or player.wins[1].item ~= 19019 then return false, "wins" end
+  if not player.raids[1] or player.raids[1].t ~= 40 then return false, "raid time" end
   if player.current.tier ~= 1 or player.current.lockout ~= "abc" then return false, "current" end
+  local track = player.tracks and player.tracks.alt
+  if not track or #track.wins ~= 1 or track.wins[1].item ~= 50 or track.current.other ~= 1 or not track.raids[1] or track.raids[1].t ~= 41 then return false, "track" end
   if #again.reservations ~= 1 or again.reservations[1].note ~= "discussed" then return false, "reservation" end
   if #again.log ~= 1 then return false, "log" end
   if TGC.ContentSum(db) ~= TGC.ContentSum(again) then return false, "checksum drifted" end
