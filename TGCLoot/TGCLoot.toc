@@ -1,0 +1,17 @@
+## Interface: 16001
+## Title: TGC Loot
+## Notes: 6-week weighted +1 loot. Main spec beats off spec.
+## Author: Dan Johnson
+## Version: 1.0.0
+## SavedVariables: TGCLootDB
+## IconTexture: Interface\Icons\INV_Misc_Coin_01
+## AddonCompartmentFunc: TGCLoot_Compartment
+
+Core.lua
+Codec.lua
+Score.lua
+Comm.lua
+Loot.lua
+Roll.lua
+UI.lua
+Main.lua
